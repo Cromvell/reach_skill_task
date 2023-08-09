@@ -1,0 +1,6 @@
+gymnasium==0.28.1
+pybullet==3.2.5
+numpy==1.23.5
+torch==2.0.0
+stable_baselines3==2.0.0
+wandb==0.15.7
