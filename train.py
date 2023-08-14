@@ -15,7 +15,7 @@ from stable_baselines3.common.env_util import make_vec_env
 
 from stable_baselines3.common.callbacks import BaseCallback
 
-from models import Encoder
+from models import CustomCombinedExtractor
 from models import RadAgent
 
 import torch.nn as nn
@@ -43,11 +43,12 @@ config = parse_args()
 #   Environment configuration
 #
 # W&B config:
-config.policy_type     = "CnnPolicy"
+config.policy_type     = "MultiInputPolicy"
 config.env_id          = "ArmReach-v0"
 
 # Encoder config
 config.encoder_features_dim = 50
+config.encoder_extra_features_dim = 1
 config.encoder_tau          = 0.005
 config.encoder_lr           = 1e-3
 config.hidden_dim           = 1024
@@ -84,9 +85,10 @@ def main():
     vec_env = make_vec_env(config.env_id, n_envs=config.n_envs, env_kwargs=env_kwargs)
 
     policy_kwargs = dict(
-        features_extractor_class=Encoder,
+        features_extractor_class=CustomCombinedExtractor,
         features_extractor_kwargs=dict(
             features_dim = config.encoder_features_dim,
+            extra_features_dim = config.encoder_extra_features_dim,
             num_layers = 4,
             num_filters = 32,
         ),
@@ -132,7 +134,7 @@ def main():
     encoder = model.policy.features_extractor
     encoder_target = copy.deepcopy(model.policy.features_extractor)
     pretrain_agent = RadAgent(
-        env.observation_space.shape, env.action_space.shape, encoder, encoder_target, device, config
+        env.observation_space, env.action_space, encoder, encoder_target, device, config
     )
     pretrain_agent.learn(dataset, config.warmup_cpc)
 
@@ -155,6 +157,29 @@ def main():
             verbose=1
         )
         learn_callbacks.append(wandb_callback)
+
+
+    class CustomCallback(BaseCallback):
+        def __init__(self, verbose=0):
+            super(CustomCallback, self).__init__(verbose)
+            self.obs_shape = env.observation_space.shape
+
+            self.extractor_state_dict = copy.deepcopy(model.policy.features_extractor.state_dict())
+
+        def _on_rollout_end(self) -> None:
+            self.extractor_state_dict = copy.deepcopy(model.policy.features_extractor.state_dict())
+
+        def _on_step(self) -> bool:
+            return True
+
+        def _on_rollout_start(self) -> None:
+            pretrain_agent.encoder.load_state_dict(self.extractor_state_dict)
+            pretrain_agent.encoder_target.load_state_dict(copy.deepcopy(self.extractor_state_dict))
+            pretrain_agent.learn(dataset, steps=100)
+
+            model.policy.features_extractor.load_state_dict(pretrain_agent.encoder_target.state_dict())
+
+    # learn_callbacks.append(CustomCallback(verbose=1))
 
 
     model.learn(total_timesteps = config.total_timesteps, callback=learn_callbacks)

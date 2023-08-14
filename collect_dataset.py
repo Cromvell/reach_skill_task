@@ -38,7 +38,8 @@ class HumanExpert():
         ee_displacement = ee_displacement.clip(min=1e-6)
         ee_displacement = ee_displacement[np.newaxis, ...]
 
-        print(f"OBS: {_obs.shape}")
+        print(f"OBS: {_obs['image'].shape}")
+        print(f"OBS_FEAT: {_obs['features']}")
         print(f"DISP: {ee_displacement}")
 
         ee_actual = ee_actual[np.newaxis, ...]

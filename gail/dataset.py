@@ -7,6 +7,9 @@ import cv2  # pytype:disable=import-error
 import numpy as np
 from joblib import Parallel, delayed
 
+from stable_baselines3.common.buffers import RolloutBuffer, DictRolloutBuffer
+from stable_baselines3.common.buffers import ReplayBuffer, DictReplayBuffer
+
 class ExpertDataset(object):
     """
     Dataset for using behavior cloning or GAIL.
@@ -60,8 +63,16 @@ class ExpertDataset(object):
                 if n_episodes == (traj_limitation + 1):
                     traj_limit_idx = idx - 1
 
+        additional_obs_features = False
+        if 'obs_features' in traj_data:
+            additional_obs_features = True
+
         observations = traj_data['obs'][:traj_limit_idx]
         actions = traj_data['actions'][:traj_limit_idx]
+
+        if additional_obs_features:
+            observations_features = traj_data['obs_features'][:traj_limit_idx]
+            self.feat_obs_original_shape = observations_features.shape[-1:]
 
         # obs, actions: shape (N * L, ) + S
         # where N = # episodes, L = episode length
@@ -84,7 +95,11 @@ class ExpertDataset(object):
         assert len(train_indices) > 0, "No sample for the training set"
         assert len(val_indices) > 0, "No sample for the validation set"
 
-        self.observations = observations
+        if additional_obs_features:
+            assert len(observations_features) == len(observations)
+            self.observations = dict(image=observations, features=observations_features)
+        else:
+            self.observations = observations
         self.actions = actions
 
         self.returns = traj_data['episode_returns'][:traj_limit_idx]
@@ -93,7 +108,7 @@ class ExpertDataset(object):
         self.std_ret = np.std(np.array(self.returns))
         self.verbose = verbose
 
-        assert len(self.observations) == len(self.actions), "The number of actions and observations differ " \
+        assert len(observations) == len(self.actions), "The number of actions and observations differ " \
                                                             "please check your expert dataset"
         self.num_traj = min(traj_limitation, np.sum(self.episode_starts))
         self.num_transition = len(self.observations)
@@ -197,13 +212,31 @@ class ExpertDataset(object):
     def copy_to_replay_buffer(self, replay_buffer):
         infos = [{}]
 
-        next_observations = np.roll(self.observations.copy(), -1, axis=0)
-        next_observations[-1] = next_observations[-2]
+        multiple_inputs = False
+        if isinstance(replay_buffer, DictReplayBuffer):
+            multiple_inputs = True
+
+        if not multiple_inputs:
+            next_observations = np.roll(self.observations.copy(), -1, axis=0)
+            next_observations[-1] = next_observations[-2]
+        else:
+            next_observations = dict()
+            for key, val in self.observations.items():
+                next_observations[key] = np.roll(self.observations[key].copy(), -1, axis=0)
+                next_observations[key][-1] = next_observations[key][-2]
 
         for i in range(self.num_transition):
+            if multiple_inputs:
+                feat_obs = self.observations['features'][i].reshape(self.feat_obs_original_shape)
+                image_obs = self.observations['image'][i]
+                image_obs = image_obs.reshape(self.obs_original_shape)
+                obs = dict(image=image_obs, features=feat_obs)
+            else:
+                obs = self.observations[i].reshape(self.obs_original_shape)
+
             replay_buffer.add(
-                self.observations[i].reshape(self.obs_original_shape),
-                next_observations[i].reshape(self.obs_original_shape),
+                obs,
+                next_observations,
                 self.actions[i].reshape(self.acts_original_shape),
                 self.rewards[i],
                 self.episode_starts[i], infos
@@ -212,10 +245,22 @@ class ExpertDataset(object):
     def copy_to_rollout_buffer(self, rollout_buffer):
         n_envs = rollout_buffer.n_envs
 
+        multiple_inputs = False
+        if isinstance(rollout_buffer, DictRolloutBuffer):
+            multiple_inputs = True
+
         try:
             for i in range(self.num_transition):
+                if multiple_inputs:
+                    feat_obs = self.observations['features'][i].reshape((-1, *self.feat_obs_original_shape))
+                    image_obs = self.observations['image'][i]
+                    image_obs = np.tile(image_obs, (n_envs, 1)).reshape((-1, *self.obs_original_shape))
+                    obs = dict(image=image_obs, features=feat_obs)
+                else:
+                    obs = np.tile(self.observations[i], (n_envs, 1)).reshape((-1, *self.obs_original_shape))
+
                 rollout_buffer.add(
-                    np.tile(self.observations[i], (n_envs, 1)).reshape((-1, *self.obs_original_shape)),
+                    obs,
                     np.tile(self.actions[i], (n_envs, 1)).reshape((-1, self.acts_original_shape)),
                     self.rewards[i],
                     self.episode_starts[i],
@@ -226,7 +271,7 @@ class ExpertDataset(object):
             breakpoint()
 
             rollout_buffer.add(
-                np.tile(self.observations[i], (n_envs, 1)).reshape((-1, *self.obs_original_shape)),
+                obs,
                 np.tile(self.actions[i], (n_envs, 1)).reshape((-1, self.acts_original_shape)),
                 self.rewards[i],
                 self.episode_starts[i],
@@ -280,7 +325,8 @@ class DataLoader(object):
         self.shuffle = shuffle
         self.queue = Queue(max_queue_len)
         self.process = None
-        self.load_images = isinstance(observations[0], str)
+        self.dict_observations = isinstance(observations, dict)
+        self.load_images = not self.dict_observations and isinstance(observations[0], str)
         self.backend = backend
         self.sequential = sequential
         self.start_idx = 0
@@ -319,7 +365,13 @@ class DataLoader(object):
                 # Shuffle indices
                 np.random.shuffle(self.indices)
 
-        obs = self.observations[self._minibatch_indices]
+        if self.dict_observations:
+            im_obs = self.observations['image'][self._minibatch_indices]
+            ft_obs = self.observations['features'][self._minibatch_indices]
+
+            obs = dict(image=im_obs, features=ft_obs)
+        else:
+            obs = self.observations[self._minibatch_indices]
         if self.load_images:
             obs = np.concatenate([self._make_batch_element(image_path) for image_path in obs],
                                  axis=0)
@@ -341,7 +393,13 @@ class DataLoader(object):
 
                     self.start_idx = minibatch_idx * self.batch_size
 
-                    obs = self.observations[self._minibatch_indices]
+                    if self.dict_observations:
+                        im_obs = self.observations['image'][self._minibatch_indices]
+                        ft_obs = self.observations['features'][self._minibatch_indices]
+
+                        obs = dict(image=im_obs, features=ft_obs)
+                    else:
+                        obs = self.observations[self._minibatch_indices]
                     if self.load_images:
                         if self.n_workers <= 1:
                             obs = [self._make_batch_element(image_path)

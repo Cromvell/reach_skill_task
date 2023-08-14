@@ -48,7 +48,7 @@ def generate_expert_traj(model, save_path=None, env=None, n_timesteps=0,
             isinstance(env.action_space, spaces.Discrete)), "Action space type not supported"
 
     if isinstance(env.observation_space, spaces.Dict):
-        obs_space = env.observation_space["image"]
+        obs_space = env.observation_space["images"]
         obs_feature_space = env.observation_space["features"]
         additional_obs_features = True
     else:

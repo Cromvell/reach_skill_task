@@ -34,11 +34,14 @@ class ArmReachEnv(gym.Env):
         )
         self.acts_low, self.acts_high = self.action_space.low, self.action_space.high
 
-        self.observation_space = gym.spaces.box.Box(
-            low = 0, high = 255,
-            shape=(3, self.cam_width, self.cam_height),
-            dtype=np.uint8
-        )
+        self.observation_space = gym.spaces.Dict({
+            "image": gym.spaces.box.Box(
+                low = 0, high = 255,
+                shape=(3, self.cam_width, self.cam_height),
+                dtype=np.uint8
+            ),
+            "features": gym.spaces.box.Box(low=0, high=5, shape=(), dtype=np.float32),
+        })
 
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
@@ -106,7 +109,6 @@ class ArmReachEnv(gym.Env):
             p.setCollisionFilterPair(self.target_id, self.arm.robot_id, -1, i, 0)
         p.setCollisionFilterPair(self.target_id, self.arm.robot_id, -1, self.arm.end_effector_id, 0)
 
-
         p.stepSimulation()
 
         ob = self.observe()
@@ -140,7 +142,7 @@ class ArmReachEnv(gym.Env):
 
     def render(self):
         if self.render_mode != "rgb_array": return np.empty(shape=(self.cam_width, self.cam_height))
-        return self._observations
+        return self._observations["image"]
 
     def seed(self, seed=None):
         self.np_random, seed = gym.utils.seeding.np_random(seed)
@@ -156,8 +158,10 @@ class ArmReachEnv(gym.Env):
         cam_arr = np.transpose(cam_arr, (2, 0, 1)) # Adjust channels
         cam_arr = cam_arr[:3] # Throw away depth channel
 
-        self._observations = cam_arr
-        return cam_arr
+        goal_dist = np.linalg.norm(self.arm.ee_real_position - self.target_pos)
+
+        self._observations = dict(image=cam_arr, features=np.array([goal_dist]))
+        return self._observations
 
 
     def compute_reward(self):
