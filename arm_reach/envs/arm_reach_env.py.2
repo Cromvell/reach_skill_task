@@ -13,7 +13,7 @@ from typing import Dict, List, Tuple, Any, Optional
 from arm_reach.envs.ur import UR_Arm
 
 class ArmReachEnv(gym.Env):
-    metadata={'render_modes': ['human', 'rgb_array'], 'video.frames_per_second': 25}
+    metadata={'render_modes': ['human', 'rgb_array'], 'video.frames_per_second': 60}
 
     def __init__(self, render_mode=None):
         self.step_count = 0
@@ -23,9 +23,9 @@ class ArmReachEnv(gym.Env):
         self.client = p.connect(p.GUI)
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
 
-        self.ee_x_bounds = [0.4, 0.5]
+        self.ee_x_bounds = [0.3, 0.8]
         self.ee_y_bounds = [-0.3, 0.3]
-        self.ee_z_bounds = [0.75, 1.0]
+        self.ee_z_bounds = [0.85, 1.0]
         self.ee_bounds = np.stack([self.ee_x_bounds, self.ee_y_bounds, self.ee_z_bounds])
 
         self.action_space = gym.spaces.box.Box(
@@ -93,19 +93,24 @@ class ArmReachEnv(gym.Env):
             z = 0.7
             return np.array([x, y, z], dtype=np.float32)
 
-        self.target_pos = generate_target_pos(x_bounds=self.ee_x_bounds,
-                                              y_bounds=self.ee_y_bounds)
+        self.target_pos = generate_target_pos(x_bounds=[0.4, 0.8],
+                                              y_bounds=[-0.4, 0.4])
         self.target_radius = 0.065
         self.target_id = p.loadURDF("sphere2red.urdf", globalScaling=1.6*self.target_radius)
         p.resetBasePositionAndOrientation(self.target_id, self.target_pos, [0, 0, 0, 1.0])
 
         self.arm.log()
 
+        # @Speed
         # Disable collision between arm and the target
         for i in self.arm.motor_ids:
             p.setCollisionFilterPair(self.target_id, self.arm.robot_id, -1, i, 0)
         p.setCollisionFilterPair(self.target_id, self.arm.robot_id, -1, self.arm.end_effector_id, 0)
 
+        # @Cleanup
+        # self.ee_position = self.arm.ee_real_position
+
+        self.initialized = True#False
 
         p.stepSimulation()
 
@@ -119,12 +124,18 @@ class ArmReachEnv(gym.Env):
     def step(self, action):
         self.step_count += 1
 
-        # print(f"ACTION: {action}")
+        print(f"ACTION: {action}")
+
+        # @Hack
+        # if self.initialized and np.any(self.arm.ee_real_position - self.ee_position > 0.001):
+        #     self.ee_position = self.arm.ee_real_position
+        # if np.all(np.abs(self.arm.ee_real_position - self.ee_position) < 0.01):
+        #     self.initialized = True
 
         # command = [ p.readUserDebugParameter(v) for v in self.ik_controls ]
         command = self.rescale_action(action)
         command = action
-        # print(f"COMMAND: {command}")
+        print(f"COMMAND: {command}")
         self.arm.act(command)
 
         p.stepSimulation()

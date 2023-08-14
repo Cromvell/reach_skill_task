@@ -130,7 +130,7 @@ class RadAgent(object):
 
         loss = self.cross_entropy_loss(logits, labels)
 
-        # print(f"CONTRASTIVE LOSS: {loss}")
+        print(f"CONTRASTIVE LOSS: {loss}")
 
         self.encoder_optimizer.zero_grad()
         self.cpc_optimizer.zero_grad()

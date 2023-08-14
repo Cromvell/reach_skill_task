@@ -41,7 +41,10 @@ class HumanExpert():
         print(f"OBS: {_obs.shape}")
         print(f"DISP: {ee_displacement}")
 
-        return ee_displacement
+        ee_actual = ee_actual[np.newaxis, ...]
+        print(f"ACT: {ee_actual}")
+
+        return ee_actual#ee_displacement
 
 def main():
     env = DummyVecEnv([lambda: gym.make(config.env_id)])

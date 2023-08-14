@@ -13,8 +13,12 @@ from gail.dataset import ExpertDataset
 
 from stable_baselines3.common.env_util import make_vec_env
 
+from stable_baselines3.common.callbacks import BaseCallback
+
 from models import Encoder
 from models import RadAgent
+
+import torch.nn as nn
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -23,8 +27,9 @@ def parse_args():
     parser.add_argument("--pretrain_dataset", default='human_demonstration.npz')
     parser.add_argument("--batch_size", default=64, type=int)
     parser.add_argument("--buffer_size", default=100000, type=int)
-    parser.add_argument("--lr", default=0.001, type=float)
+    parser.add_argument("--lr", default=0.0001, type=float)
 
+    parser.add_argument("--total_timesteps", default=20_000, type=int)
     parser.add_argument("--warmup_cpc", default=1600, type=int)
     parser.add_argument("--n_envs", default=1, type=int)
 
@@ -39,18 +44,22 @@ config = parse_args()
 #
 # W&B config:
 config.policy_type     = "CnnPolicy"
-config.total_timesteps = 10_000
 config.env_id          = "ArmReach-v0"
 
 # Encoder config
 config.encoder_features_dim = 50
 config.encoder_tau          = 0.005
 config.encoder_lr           = 1e-3
-config.hidden_dim           = 4
+config.hidden_dim           = 1024
 
 # RL config
-config.n_steps  = 4096
-config.ent_coef = 0.001
+config.n_steps       = 4000
+config.ent_coef      = 0.001
+config.vf_coef       = 0.5
+config.gamma         = 0.95
+config.clip_range    = 0.2
+config.clip_range_vf = None
+config.target_kl     = None
 
 def main():
     if config.wandb_log:
@@ -59,7 +68,7 @@ def main():
             config=config,
             sync_tensorboard=True,
             monitor_gym=True,
-            # save_code=True,  
+            # save_code=True,
         )
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -88,7 +97,9 @@ def main():
     model = PPO(
         config.policy_type, vec_env, policy_kwargs=policy_kwargs,
         verbose=1, tensorboard_log=tensorboard_log, learning_rate = config.lr,
-        n_steps = config.n_steps, ent_coef=config.ent_coef, normalize_advantage=True
+        n_steps = config.n_steps, ent_coef=config.ent_coef, normalize_advantage=True,
+        vf_coef = config.vf_coef, gamma = config.gamma, clip_range = config.clip_range,
+        clip_range_vf = config.clip_range_vf, target_kl = config.target_kl
     )
     env = model.get_env()
 
@@ -97,6 +108,24 @@ def main():
         batch_size=config.batch_size, sequential_preprocessing=True
     )
     dataset.init_dataloader(config.batch_size)
+
+    # Initizlize policy
+    def weight_init(m):
+        """Custom weight init for Conv2D and Linear layers."""
+        if isinstance(m, nn.Linear):
+            nn.init.orthogonal_(m.weight.data)
+            m.bias.data.fill_(0.0)
+        elif isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+            # delta-orthogonal init from https://arxiv.org/pdf/1806.05393.pdf
+            assert m.weight.size(2) == m.weight.size(3)
+            m.weight.data.fill_(0.0)
+            m.bias.data.fill_(0.0)
+            mid = m.weight.size(2) // 2
+            gain = nn.init.calculate_gain('relu')
+            nn.init.orthogonal_(m.weight.data[:, :, mid, mid], gain)
+
+    # Initialize policy
+    model.policy.apply(weight_init)
 
     print("Performing encoder pretraining...")
     # Contrastive pretraining step, updating model inplace
@@ -112,6 +141,10 @@ def main():
 
     # Copy pretrained parameters to model extractor
     model.policy.features_extractor.load_state_dict(pretrain_agent.encoder_target.state_dict())
+
+    # Freezing extractor
+    # for p in model.policy.features_extractor.parameters():
+    #     p.requires_grad = False
 
     print("Starting policy training...")
     learn_callbacks = []

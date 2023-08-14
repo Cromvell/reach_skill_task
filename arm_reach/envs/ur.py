@@ -12,7 +12,7 @@ class UR_Arm:
         self.enable_inverse_kinematics = True
         self.move_bounds = move_bounds
         self.max_force = 400
-        self.max_velocity = 1.0
+        self.max_velocity = 5.0
         self.end_effector_id = 7
         self.reset()
 
@@ -48,9 +48,10 @@ class UR_Arm:
                 self.motor_ids.append(int(joint_info[0]))
 
         # Moving arm to a random position
+        lower_bound = max(self.move_bounds[2][0], 0.9)
         init_x = np.random.uniform(self.move_bounds[0][0], self.move_bounds[0][1])
         init_y = np.random.uniform(self.move_bounds[1][0], self.move_bounds[1][1])
-        init_z = np.random.uniform(self.move_bounds[2][0], self.move_bounds[2][1])
+        init_z = np.random.uniform(lower_bound, self.move_bounds[2][1])
 
         init_ee_position = np.array([init_x, init_y, init_z])
         ik_init_positions = p.calculateInverseKinematics(self.robot_id, self.end_effector_id, init_ee_position)
@@ -78,7 +79,7 @@ class UR_Arm:
 
     def act(self, command):
         if self.enable_inverse_kinematics:
-            ee_pos = self.ee_real_position + command
+            ee_pos = command
 
             joint_positions = p.calculateInverseKinematics(self.robot_id, self.end_effector_id, ee_pos, targetOrientation=[0, 0, 0])
 
