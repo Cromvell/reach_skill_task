@@ -210,7 +210,7 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
                 total_concat_size += self.encoder_features_dim
             elif key == "features":
                 # Just passing recieved features for now
-                extractors[key] = nn.Identity()
+                extractors[key] = nn.Linear(subspace.shape[0], self.encoder_extra_features_dim)
                 total_concat_size += self.encoder_extra_features_dim
 
         self.extractors = nn.ModuleDict(extractors)
@@ -226,4 +226,6 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
             if len(obs.shape) < 2:
                 obs = obs.unsqueeze(0)
             encoded_tensor_list.append(extractor(obs))
+            if len(encoded_tensor_list[-1].shape) > 2:
+                encoded_tensor_list[-1] = encoded_tensor_list[-1].squeeze()
         return torch.cat(encoded_tensor_list, dim=1)

@@ -27,16 +27,18 @@ def parse_args():
     parser.add_argument("--pretrain_dataset", default='human_demonstration.npz')
     parser.add_argument("--batch_size", default=64, type=int)
     parser.add_argument("--buffer_size", default=100000, type=int)
-    parser.add_argument("--lr", default=0.0001, type=float)
+    parser.add_argument("--lr", default=0.0003, type=float)
 
     parser.add_argument("--total_timesteps", default=20_000, type=int)
     parser.add_argument("--warmup_cpc", default=1600, type=int)
     parser.add_argument("--n_envs", default=1, type=int)
+    parser.add_argument("--continue_train_path", default='')
 
     args = parser.parse_args()
     return args
 
 config = parse_args()
+
 
 #################################
 #
@@ -48,7 +50,7 @@ config.env_id          = "ArmReach-v0"
 
 # Encoder config
 config.encoder_features_dim = 50
-config.encoder_extra_features_dim = 1
+config.encoder_extra_features_dim = 16
 config.encoder_tau          = 0.005
 config.encoder_lr           = 1e-3
 config.hidden_dim           = 1024
@@ -111,7 +113,7 @@ def main():
     )
     dataset.init_dataloader(config.batch_size)
 
-    # Initizlize policy
+    # Initiazlize policy
     def weight_init(m):
         """Custom weight init for Conv2D and Linear layers."""
         if isinstance(m, nn.Linear):
@@ -127,7 +129,10 @@ def main():
             nn.init.orthogonal_(m.weight.data[:, :, mid, mid], gain)
 
     # Initialize policy
-    model.policy.apply(weight_init)
+    if config.continue_train_path:
+        model.load(config.continue_train_path)
+    else:
+        model.policy.apply(weight_init)
 
     print("Performing encoder pretraining...")
     # Contrastive pretraining step, updating model inplace

@@ -34,13 +34,18 @@ class ArmReachEnv(gym.Env):
         )
         self.acts_low, self.acts_high = self.action_space.low, self.action_space.high
 
+        joint_count = 6
         self.observation_space = gym.spaces.Dict({
             "image": gym.spaces.box.Box(
                 low = 0, high = 255,
                 shape=(3, self.cam_width, self.cam_height),
                 dtype=np.uint8
             ),
-            "features": gym.spaces.box.Box(low=0, high=5, shape=(), dtype=np.float32),
+            "features": gym.spaces.box.Box(
+                low=0, high=5,
+                shape=(1 + joint_count,),
+                dtype=np.float32
+            ),
         })
 
 
@@ -58,8 +63,8 @@ class ArmReachEnv(gym.Env):
         #     1: p.addUserDebugParameter("Shoulder pan",  -2*math.pi, 2*math.pi,  0.0       ),
         #     2: p.addUserDebugParameter("Shoulder lift", -2*math.pi, 2*math.pi, -math.pi/2.),
         #     3: p.addUserDebugParameter("Elbow",         -2*math.pi, 2*math.pi,  math.pi/2.),
-        #     4: p.addUserDebugParameter("Wrist 1",       -2*math.pi, 2*math.pi, -math.pi/2.),
-        #     5: p.addUserDebugParameter("Wrist 2",       -2*math.pi, 2*math.pi, -math.pi/2.),
+        #     4: p.addUserDebugParameter("Wrist 1",       -2*math.pi, 2*math.pi,  0.0),
+        #     5: p.addUserDebugParameter("Wrist 2",       -2*math.pi, 2*math.pi,  math.pi/2.),
         #     6: p.addUserDebugParameter("Wrist 3",       -2*math.pi, 2*math.pi,  0.0       ),
         # }
 
@@ -75,7 +80,9 @@ class ArmReachEnv(gym.Env):
 
         self.done = False
 
-    def reset(self, seed: int = None, options: Dict[str, Any] = None):
+        self.env_init()
+
+    def env_init(self):
         self.step_count = 0
 
         p.resetSimulation(self.client)
@@ -89,6 +96,27 @@ class ArmReachEnv(gym.Env):
         self.table_id = p.loadURDF("table/table.urdf")
         p.resetBasePositionAndOrientation(self.table_id, [0.5, 0, 0], [0, 0, 0, 1.0])
 
+        self.target_radius = 0.065
+        self.target_id = p.loadURDF("sphere2red.urdf", globalScaling=1.6*self.target_radius)
+
+        self.arm.log()
+
+        # Disable collision between arm and the target
+        for i in self.arm.motor_ids:
+            p.setCollisionFilterPair(self.target_id, self.arm.robot_id, -1, i, 0)
+        p.setCollisionFilterPair(self.target_id, self.arm.robot_id, -1, self.arm.end_effector_id, 0)
+
+        p.stepSimulation()
+
+
+    def reset(self, seed: int = None, options: Dict[str, Any] = None):
+        if seed is not None:
+            np.random.seed(seed)
+
+        self.step_count = 0
+
+        self.arm.reset()
+
         # Select position for target
         def generate_target_pos(x_bounds, y_bounds):
             x = np.random.uniform(x_bounds[0], x_bounds[1])
@@ -98,16 +126,9 @@ class ArmReachEnv(gym.Env):
 
         self.target_pos = generate_target_pos(x_bounds=self.ee_x_bounds,
                                               y_bounds=self.ee_y_bounds)
-        self.target_radius = 0.065
-        self.target_id = p.loadURDF("sphere2red.urdf", globalScaling=1.6*self.target_radius)
         p.resetBasePositionAndOrientation(self.target_id, self.target_pos, [0, 0, 0, 1.0])
 
         self.arm.log()
-
-        # Disable collision between arm and the target
-        for i in self.arm.motor_ids:
-            p.setCollisionFilterPair(self.target_id, self.arm.robot_id, -1, i, 0)
-        p.setCollisionFilterPair(self.target_id, self.arm.robot_id, -1, self.arm.end_effector_id, 0)
 
         p.stepSimulation()
 
@@ -124,7 +145,8 @@ class ArmReachEnv(gym.Env):
         # print(f"ACTION: {action}")
 
         # command = [ p.readUserDebugParameter(v) for v in self.ik_controls ]
-        command = self.rescale_action(action)
+        # command = [ p.readUserDebugParameter(v) for _, v in self.joint_controls.items() ]
+        # command = self.rescale_action(action)
         command = action
         # print(f"COMMAND: {command}")
         self.arm.act(command)
@@ -160,7 +182,8 @@ class ArmReachEnv(gym.Env):
 
         goal_dist = np.linalg.norm(self.arm.ee_real_position - self.target_pos)
 
-        self._observations = dict(image=cam_arr, features=np.array([goal_dist]))
+        plain_feat = np.concatenate([np.array([goal_dist]), self.arm.real_positions])
+        self._observations = dict(image=cam_arr, features=plain_feat)
         return self._observations
 
 
