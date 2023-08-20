@@ -56,7 +56,7 @@ config.encoder_lr           = 1e-3
 config.hidden_dim           = 1024
 
 # RL config
-config.n_steps       = 4000
+config.n_steps       = 2000#4000
 config.ent_coef      = 0.001
 config.vf_coef       = 0.5
 config.gamma         = 0.95
