@@ -56,7 +56,7 @@ config.encoder_lr           = 1e-3
 config.hidden_dim           = 1024
 
 # RL config
-config.n_steps       = 2000#4000
+config.n_steps       = 4000
 config.ent_coef      = 0.001
 config.vf_coef       = 0.5
 config.gamma         = 0.95
@@ -95,12 +95,26 @@ def main():
             num_filters = 32,
         ),
         net_arch=[config.hidden_dim] * 3,
-        normalize_images = True
+        normalize_images = True,
     )
+
+
+    def lr_schedule(initial_value):
+        if isinstance(initial_value, str):
+            initial_value = float(initial_value)
+
+        def func(progress_remaining):
+            if   progress_remaining > 0.9: return initial_value
+            elif progress_remaining > 0.6: return initial_value * 0.5
+            elif progress_remaining > 0.4: return initial_value * 0.25
+            elif progress_remaining > 0.2: return initial_value * 0.125
+            return initial_value * 0.0625
+
+        return func
 
     model = PPO(
         config.policy_type, vec_env, policy_kwargs=policy_kwargs,
-        verbose=1, tensorboard_log=tensorboard_log, learning_rate = config.lr,
+        verbose=1, tensorboard_log=tensorboard_log, learning_rate = lr_schedule(config.lr),
         n_steps = config.n_steps, ent_coef=config.ent_coef, normalize_advantage=True,
         vf_coef = config.vf_coef, gamma = config.gamma, clip_range = config.clip_range,
         clip_range_vf = config.clip_range_vf, target_kl = config.target_kl
@@ -185,7 +199,6 @@ def main():
             model.policy.features_extractor.load_state_dict(pretrain_agent.encoder_target.state_dict())
 
     # learn_callbacks.append(CustomCallback(verbose=1))
-
 
     model.learn(total_timesteps = config.total_timesteps, callback=learn_callbacks)
     model.save("weights/trained_policy")
