@@ -57,16 +57,12 @@ class UR_Arm:
         init_y = np.random.uniform(self.move_bounds[1][0], self.move_bounds[1][1])
         init_z = np.random.uniform(lower_bound, self.move_bounds[2][1])
 
+        self.ee_orientation = p.getQuaternionFromEuler([math.pi, math.pi/2., 0])
         if self.enable_inverse_kinematics:
             init_ee_position = np.array([init_x, init_y, init_z])
-            ik_init_positions = p.calculateInverseKinematics(self.robot_id, self.end_effector_id, init_ee_position)
+            ik_init_positions = p.calculateInverseKinematics(self.robot_id, self.end_effector_id, init_ee_position, targetOrientation=self.ee_orientation)
 
-            # Fix wrist orientation
             self.init_positions = list(ik_init_positions)
-            self.init_positions[-1] = 0
-            self.init_positions[-2] = math.pi/2.
-            self.init_positions[-3] = 0
-
         else:
             # Right angle positions
             self.init_positions = [
@@ -90,13 +86,7 @@ class UR_Arm:
         if self.enable_inverse_kinematics:
             ee_pos = command
 
-            joint_positions = p.calculateInverseKinematics(self.robot_id, self.end_effector_id, ee_pos, targetOrientation=[0, 0, 0])
-
-            # Fix wrist orientation
-            joint_positions = list(joint_positions)
-            joint_positions[-1] = 0
-            joint_positions[-2] = math.pi/2.
-            joint_positions[-3] = 0
+            joint_positions = p.calculateInverseKinematics(self.robot_id, self.end_effector_id, ee_pos, targetOrientation=self.ee_orientation)
 
             for i in range(self.joint_count):
                 joint_id = self.motor_ids[i]
