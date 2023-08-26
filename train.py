@@ -106,9 +106,7 @@ def main():
         def func(progress_remaining):
             if   progress_remaining > 0.9: return initial_value
             elif progress_remaining > 0.6: return initial_value * 0.5
-            elif progress_remaining > 0.4: return initial_value * 0.25
-            elif progress_remaining > 0.2: return initial_value * 0.125
-            return initial_value * 0.0625
+            return initial_value * 0.25
 
         return func
 
@@ -142,26 +140,27 @@ def main():
             gain = nn.init.calculate_gain('relu')
             nn.init.orthogonal_(m.weight.data[:, :, mid, mid], gain)
 
-    # Initialize policy
-    if config.continue_train_path:
-        model.load(config.continue_train_path)
-    else:
-        model.policy.apply(weight_init)
-
-    print("Performing encoder pretraining...")
     # Contrastive pretraining step, updating model inplace
     encoder = model.policy.features_extractor
     encoder_target = copy.deepcopy(model.policy.features_extractor)
     pretrain_agent = RadAgent(
         env.observation_space, env.action_space, encoder, encoder_target, device, config
     )
-    pretrain_agent.learn(dataset, config.warmup_cpc)
+
+    if config.continue_train_path:
+        model.load(config.continue_train_path)
+    else:
+        # Initialize policy
+        model.policy.apply(weight_init)
+
+        print("Performing encoder pretraining...")
+        pretrain_agent.learn(dataset, config.warmup_cpc)
+
+        # Copy pretrained parameters to model extractor
+        model.policy.features_extractor.load_state_dict(pretrain_agent.encoder_target.state_dict())
 
     # Fill model replay buffer with expert trajectories before RL policy training
     dataset.copy_to_rollout_buffer(model.rollout_buffer)
-
-    # Copy pretrained parameters to model extractor
-    model.policy.features_extractor.load_state_dict(pretrain_agent.encoder_target.state_dict())
 
     # Freezing extractor
     # for p in model.policy.features_extractor.parameters():
